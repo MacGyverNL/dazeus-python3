@@ -18,8 +18,8 @@ class DaZeus:
         self._transport = None # FIXME remove this if we never use it directly.
         self._protocol  = None
         
-        self._eventbuffer = collections.deque()
-        self._replybuffer = collections.deque()
+        self._eventbuffer = tulip.DataBuffer()
+        self._replybuffer = tulip.DataBuffer()
 
     @tulip.coroutine
     def connect(self, conntype, address, port=None):
@@ -43,76 +43,45 @@ class DaZeus:
         self._messages = protocol.set_parser(dazeus_message_parser())
         self._transport = transport
         self._protocol  = protocol
+
+        buffer_router(self._messages, is_event, self._eventbuffer, self._replybuffer)
     
         return True
 
-    @tulip.coroutine
-    def split_stream(self):
-        #TODO handle EOF etc.
-        """Function that dumps the different DaZeus messages into their correct buffers."""
-        messages = self._messages
-        if messages is not None:
-            message = yield from messages.read()
-            if "event" in message:
-                self._eventbuffer.feed_data(message)
-            else:
-                self._replybuffer.feed_data(message)
+#    @tulip.coroutine
+#    def split_stream(self):
+#        #TODO handle EOF etc.
+#        """Function that dumps the different DaZeus messages into their correct buffers."""
+#        messages = self._messages
+#        if messages is not None:
+#            message = yield from messages.read()
+#            if "event" in message:
+#                self._eventbuffer.feed_data(message)
+#            else:
+#                self._replybuffer.feed_data(message)
 
-    @tulip.coroutine
-    def _read(self):
-        messages = self._messages
-        if messages is not None:
-            #TODO handle EOF
-            return (yield from messages.read())
-        else:
-            return None
+#    @tulip.coroutine
+#    def _read(self):
+#        messages = self._messages
+#        if messages is not None:
+#            #TODO handle EOF
+#            return (yield from messages.read())
+#        else:
+#            return None
 
-    def _dump_in_buffer(self, message):
-        if "event" in message:
-            self._eventbuffer.append(message)
+#    def _dump_in_buffer(self, message):
+#        if "event" in message:
+#            self._eventbuffer.append(message)
 
-    # TODO: create a stream-router which could handle this in a task, then simply
-    # yield from the read of each DataBuffer the router writes to.
     @tulip.coroutine
     def read_event(self):
-        """Reads messages from the buffer until an event is encountered.
+        """Read the first event in the buffer."""
+        return (yield from self._eventbuffer.read())
 
-        Any non-events encountered will still be buffered."""
-        events = self._eventbuffer
-        replies = self._replybuffer
-        if not events:
-            while True:
-                message = yield from self._read()
-                if "did" in message or "got" in message:
-                    replies.append(message)
-                elif "event" not in message:
-                    #TODO raise exception
-                    return None
-                else:
-                    return message
-        else:
-            return events.popleft()
-
-    # TODO: see TODO for read_event()
     @tulip.coroutine
     def _read_reply(self):
-        """Reads messages from the buffer until a reply is encountered.
-
-        Any non-replies encountered will still be buffered."""
-        events = self._eventbuffer
-        replies = self._replybuffer
-        if not replies:
-            while True:
-                message = yield from self._read()
-                if "event" in message:
-                    events.append(message)
-                elif "did" not in message and "got" not in message:
-                    #TODO raise exception
-                    return None
-                else:
-                    return message
-        else:
-            return replies.popleft()
+        """Read the first reply in the buffer."""
+        return (yield from self._replybuffer.read())
 
     @tulip.coroutine
     def networks(self):
@@ -350,6 +319,27 @@ def dazeus_message_parser():
         raise
 
 
+def is_event(message):
+    if "event" in message:
+        return True
+    else:
+        return False
+    
+
+@tulip.task
+def buffer_router(inbuffer, selector, truebuffer, falsebuffer):
+    """Reads messages from the inbuffer and feeds them to one of the output buffers.
+
+    inbuffer, truebuffer and falsebuffer are tulip.DataBuffer.
+    selector is a method that takes one argument, the message, and returns a boolean."""
+    # TODO handle EOF
+    while True:
+        message = yield from inbuffer.read()
+        if selector(message):
+            truebuffer.feed_data(message)
+        else:
+            falsebuffer.feed_data(message)
+    
 
 @tulip.task
 def networkzeus():
