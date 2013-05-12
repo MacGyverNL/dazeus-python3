@@ -12,12 +12,13 @@ import tulip
 # TODO: documentation
 # TODO: well, most of everything else as well.
 
+
 class DaZeus:
 
     def __init__(self):
-        self._transport = None # FIXME remove this if we never use it directly.
+        self._transport = None  # FIXME remove this if we never use it directly.
         self._protocol  = None
-        
+
         self._eventbuffer = tulip.DataBuffer()
         self._replybuffer = tulip.DataBuffer()
 
@@ -39,39 +40,14 @@ class DaZeus:
             transport, protocol = yield from loop.create_connection(tulip.StreamProtocol, sock=usock)
         elif conntype == "tcp":
             transport, protocol = yield from loop.create_connection(tulip.StreamProtocol, address, port)
-    
+
         self._messages = protocol.set_parser(dazeus_message_parser())
         self._transport = transport
         self._protocol  = protocol
 
         buffer_router(self._messages, is_event, self._eventbuffer, self._replybuffer)
-    
+
         return True
-
-#    @tulip.coroutine
-#    def split_stream(self):
-#        #TODO handle EOF etc.
-#        """Function that dumps the different DaZeus messages into their correct buffers."""
-#        messages = self._messages
-#        if messages is not None:
-#            message = yield from messages.read()
-#            if "event" in message:
-#                self._eventbuffer.feed_data(message)
-#            else:
-#                self._replybuffer.feed_data(message)
-
-#    @tulip.coroutine
-#    def _read(self):
-#        messages = self._messages
-#        if messages is not None:
-#            #TODO handle EOF
-#            return (yield from messages.read())
-#        else:
-#            return None
-
-#    def _dump_in_buffer(self, message):
-#        if "event" in message:
-#            self._eventbuffer.append(message)
 
     @tulip.coroutine
     def read_event(self):
@@ -101,8 +77,8 @@ class DaZeus:
             return
         return reply.get("networks")
         #TODO handle absence of networks.
-        
-        
+
+
 
     def channels(self, network):
         """Returns a list of channels joined on the specified network."""
@@ -110,42 +86,42 @@ class DaZeus:
 
     def message(self, network, recipient, message):
         """Sends the given message to the given recipient on the network.
-        
+
         Recipient may be a channel (usually prefixed with #) or a nickname."""
         raise NotImplementedError
 
     def action(self, network, recipient, message):
         """Sends the given message as a CTCP ACTION (/me) to the given recipient on the network.
-        
+
         Recipient may be a channel (usually prefixed with #) or a nickname."""
         raise NotImplementedError
 
     def names(self, network, channel):
         """Sends a NAMES command for the given channel and network.
-        
-        If the sending succeeds, a NAMES event will be generated somewhere in the future using 
+
+        If the sending succeeds, a NAMES event will be generated somewhere in the future using
         the DaZeus event system."""
         raise NotImplementedError
 
     def whois(self, network, nickname):
         """Sends a WHOIS command for the given channel and network.
-        
-        If the sending succeeds, a WHOIS event will be generated somewhere in the future using 
+
+        If the sending succeeds, a WHOIS event will be generated somewhere in the future using
         the DaZeus event system."""
         raise NotImplementedError
 
     def join(self, network, channel):
         """Sends a JOIN command for the given channel and network.
-        
-        If the sending succeeds and the join is successful, a JOIN event will be generated 
+
+        If the sending succeeds and the join is successful, a JOIN event will be generated
         somewhere in the future using the DaZeus event system. A join is not successful if the
         channel was already joined."""
         raise NotImplementedError
-    
+
     def part(self, network, channel):
         """Sends a PART command for the given channel and network.
-        
-        If the sending succeeds and the part is successful, a PART event will be generated 
+
+        If the sending succeeds and the part is successful, a PART event will be generated
         somewhere in the future using the DaZeus event system. A part is not successful if the
         channel was not joined."""
         raise NotImplementedError
@@ -163,7 +139,7 @@ class DaZeus:
             configname = name
 
         raise NotImplementedError
-    
+
     def get_config_var(self, vargroup, varname):
         """Retrieves the given variable from the configuration file.
 
@@ -183,7 +159,7 @@ class DaZeus:
         """Sets the given variable in the persistent database.
 
         An optional context can be raise NotImplementedErrored in the form of network, receiver and sender, in that
-        order of specificity, so that multiple properties with the same name and partially 
+        order of specificity, so that multiple properties with the same name and partially
         overlapping contexts can be stored. This is useful in situations where you want, e.g.
         different settings per network, or different settings per channel."""
         raise NotImplementedError
@@ -265,21 +241,21 @@ def parse_json(json_raw):
 
     json_dict = json.loads(json_raw)
     print(json_dict)
-    
+
     return json_dict
 
 def dazeus_message_parser():
     """Read DaZeus messages from the stream.
-    
+
     Read DaZeus messages from the stream, parse their JSON.
     Fixme: which exceptions can be raised?
     Fixme: return value?
-    
+
     See tulip/parsers.py and tulip/http/protocol.py for rationale.
     """
 
     out, buf = yield
-    
+
     try:
         # FIXME correctly ignore \n and \r outside of JSON
         # FIXME handle EOF (empty buffer)
@@ -291,15 +267,15 @@ def dazeus_message_parser():
             print(json_size)
             json_size = json_size.decode('ascii')[:-1]
             print(json_size)
-            
+
             if not json_size.isdecimal():
                 json_size = json_size.lstrip("\r\n")
-    
+
             #TODO better handling for invalid characters in stream.
             json_size = int(json_size)
             print(json_size)
             #FIXME remove prints
-            
+
             # read the JSON message itself, terminating at the delimiting character
             # or at json_size. FIXME throw an exception if the delimiter is not found
             # at json_size.
@@ -324,7 +300,7 @@ def is_event(message):
         return True
     else:
         return False
-    
+
 
 @tulip.task
 def buffer_router(inbuffer, selector, truebuffer, falsebuffer):
@@ -339,7 +315,7 @@ def buffer_router(inbuffer, selector, truebuffer, falsebuffer):
             truebuffer.feed_data(message)
         else:
             falsebuffer.feed_data(message)
-    
+
 
 @tulip.task
 def networkzeus():
@@ -351,8 +327,6 @@ def networkzeus():
     while(True):
         networks = yield from dazeus.networks()
         print(networks)
-
-
 
 if __name__ == "__main__":
     # Setup the event loop
