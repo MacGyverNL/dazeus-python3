@@ -9,7 +9,6 @@ import json
 
 import tulip
 
-# TODO: cleanup prints
 # TODO: fix decent debugging logging
 # TODO: documentation
 # TODO: well, most of everything else as well.
@@ -27,6 +26,8 @@ class DaZeus:
 
         self._eventbuffer = tulip.DataBuffer()
         self._replybuffer = tulip.DataBuffer()
+
+        self._connected = False
 
     @tulip.coroutine
     def connect(self, conntype, address, port=None):
@@ -56,6 +57,7 @@ class DaZeus:
         buffer_router(self._messages, is_event, self._eventbuffer,
                       self._replybuffer)
 
+        self._connected = True
         return True
 
     @tulip.coroutine
@@ -284,6 +286,22 @@ class DaZeus:
             #TODO check if there can be duplicates.
             return events
 
+    @tulip.coroutine
+    def subscribe_command(self, command, network=None):
+        """Subscribe to a specific command event.
+
+        This is useful for plugins that do not want to handle all PRIVMSGs
+        sent in channels, but only their own commands.
+        """
+        #TODO: There's more arguments than just command and network. Find
+        # out what they mean.
+        params = ["do", "command", command]
+        if network is not None:
+            params.add(network)
+        req = dazeus_json_create(dazeus_create_request(*params))
+        reply = yield from self._send(req)
+        return check_reply("do", "command", reply)
+
     def subscriptions(self):
         """Returns a list of all events which you are subscribed to."""
         return self._subscriptions
@@ -297,6 +315,12 @@ class DaZeus:
 def check_reply(reqtype, what, reply):
     logging.debug("Reqtype passed to check_reply: %s", reqtype)
     logging.debug("Reply passed to check_reply: %s", reply)
+
+    if reply is None:
+        #TODO make this an exception
+        logging.error("EOF received while waiting for reply.")
+        return False
+
     if reqtype == "get":
         reptype = "got"
     elif reqtype == "do":
@@ -306,7 +330,7 @@ def check_reply(reqtype, what, reply):
         logging.warning("Invalid reqtype: %s", reqtype)
     got = reply.get(reptype)
     if got != what:
-        logging.error("INVALID REPLY RECEIVED: %s", reply)
+        logging.error("Invalid reply received: %s", reply)
         #TODO make this an exception
         return False
     success = reply.get("success")
@@ -318,16 +342,9 @@ def check_reply(reqtype, what, reply):
     return True
 
 
-def create_json(json_dict):
-    logging.debug("Creating json from dict: %s", json_dict)
-    json_raw = json.dumps(json_dict)
-    logging.debug("Json created: %s", json_raw)
-
-    return json_raw
-
-
 def dazeus_json_create(message_dict):
-    msg = create_json(message_dict)
+    logging.debug("Creating json from dict: %s", message_dict)
+    msg = json.dumps(message_dict)
     logging.debug("Json to send: %s", msg)
     msg = msg.encode('utf-8')
     logging.debug("Encoded json: %s", msg)
@@ -336,7 +353,7 @@ def dazeus_json_create(message_dict):
     length = str(len(msg))
     length = length.encode('utf-8')
     msg = length + msg
-    logging.debug("Message to send: %s", msg)
+    logging.debug("Complete message to send: %s", msg)
 
     return msg
 
@@ -380,9 +397,9 @@ def dazeus_message_parser():
             # read size of the JSON message, at most 20 bytes of ASCII-digits
             # buf.readuntil also yields the delimiting character, strip that.
             json_size = yield from buf.readuntil(b'{', 20, BufferError)
-            logging.debug("Received size: %s", json_size)
+            logging.debug("Received sizefield: %s", json_size)
             json_size = json_size.decode('ascii')[:-1]
-            logging.debug("Decoded size from bytes: %s", json_size)
+            logging.debug("Decoded sizefield from bytes: %s", json_size)
 
             if not json_size.isdecimal():
                 json_size = json_size.lstrip("\r\n")
@@ -402,13 +419,19 @@ def dazeus_message_parser():
 
             # Parse the raw JSON
             # TODO: invalid json handling
-            json_dict = parse_json(json_raw)
+            logging.debug("Parsing json: %s", json_raw)
+            json_dict = json.loads(json_raw)
+            logging.debug("Resulting dictionary: %s", json_dict)
 
             # Push the JSON dictionary onto the application's databuffer.
             out.feed_data(json_dict)
-    except:
-        logging.error("Exception caught while parsing protocol messages.")
-        raise
+    except tulip.EofStream as e:
+        logging.exception("EofStream exception caught while parsing "
+                          "protocol messages: %s", e)
+        out.feed_eof()
+    except Exception as e:
+        logging.exception("Other exception caught while parsing protocol "
+                          "messages: %s", e)
 
 
 def is_event(message):
@@ -424,15 +447,26 @@ def buffer_router(inbuffer, selector, truebuffer, falsebuffer):
     boolean. If selector(message) returns True, the message is fed to
     truebuffer, falsebuffer otherwise.
     """
-    # TODO handle EOF
-    while True:
-        message = yield from inbuffer.read()
-        if selector(message):
-            logging.debug("Fed message %s to truebuffer", message)
-            truebuffer.feed_data(message)
-        else:
-            logging.debug("Fed message %s to falsebuffer", message)
-            falsebuffer.feed_data(message)
+    try:
+        while True:
+            message = yield from inbuffer.read()
+            if message is None:
+                logging.debug("Routed stream closed. Feeding EOF to buffers.")
+                truebuffer.feed_eof()
+                falsebuffer.feed_eof()
+                break
+
+            if selector(message):
+                logging.debug("Fed message %s to truebuffer", message)
+                truebuffer.feed_data(message)
+            else:
+                logging.debug("Fed message %s to falsebuffer", message)
+                falsebuffer.feed_data(message)
+    except Exception as e:
+        logging.exception("Exception caught while parsing "
+                          "protocol messages: %s", e)
+        truebuffer.feed_eof()
+        falsebuffer.feed_eof()
 
 
 @tulip.task
@@ -444,8 +478,11 @@ def networkzeus():
 
     handshake = yield from dazeus.handshake("networkzeus", "0.0.1")
 
+    # register for }test
+    events = yield from dazeus.subscribe_command("test")
+
     events = yield from dazeus.subscribe_events("whois", "names",
-                                                "join", "part")
+                                                "join", "part", "privmsg")
     print("Subscribed to events: %s", events)
 
     networks = yield from dazeus.networks()
@@ -456,9 +493,9 @@ def networkzeus():
         nick = yield from dazeus.nick(network)
         channels = yield from dazeus.channels(network)
         for channel in channels:
-            message = yield from dazeus.message(network, channel, "Test")
-            action = yield from dazeus.action(network, channel,
-                                              "tests some more")
+#            message = yield from dazeus.message(network, channel, "Test")
+#            action = yield from dazeus.action(network, channel,
+#                                              "tests some more")
             names = yield from dazeus.names(network, channel)
 
 
