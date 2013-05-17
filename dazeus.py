@@ -21,11 +21,11 @@ class DaZeus:
 
     def __init__(self):
         self._subscriptions = []
-        self._transport = None  # FIXME remove this if we never use it directly
+        self._transport = None
         self._protocol = None
 
-        self._eventbuffer = tulip.DataBuffer()
-        self._replybuffer = tulip.DataBuffer()
+        self._eventbuffer = None
+        self._replybuffer = None
 
         self._connected = False
 
@@ -54,6 +54,9 @@ class DaZeus:
         self._transport = transport
         self._protocol = protocol
 
+        self._eventbuffer = tulip.DataBuffer()
+        self._replybuffer = tulip.DataBuffer()
+
         buffer_router(self._messages, is_event, self._eventbuffer,
                       self._replybuffer)
 
@@ -61,23 +64,65 @@ class DaZeus:
         return True
 
     @tulip.coroutine
+    def disconnect(self):
+        """Disconnect the socket and remove transport and protocol.
+
+        Any data buffered to be sent will still be sent before the actual
+        close is done.
+        Any data received from the socket will remain buffered until read.
+        """
+        if self._connected:
+            transport = self._transport
+            # Writing an EOF will trigger a close() at dazeus-core.
+            # Best-effort: Triggering a close() in this way ensures that
+            # dazeus-core has read all the buffered requests and at least
+            # buffered replies to be sent before reading the EOF.
+            yield from transport.write_eof()
+            self._connected = False
+            self._transport = None
+            self._protocol = None
+
+    @tulip.coroutine
+    def _abort(self):
+        """Immediately close the socket, remove transport and protocol.
+
+        Any data buffered to be sent is lost.
+        Any data already read from the socket will remain buffered until read.
+        Any data waiting to be read from the socket is lost.
+        """
+        if self._connected:
+            transport = self._transport
+            yield from transport.abort()
+            self._connected = False
+            self._transport = None
+            self._protocol = None
+
+    @tulip.coroutine
     def read_event(self):
         """Read the first event in the buffer."""
-        return (yield from self._eventbuffer.read())
+        event = yield from self._eventbuffer.read()
+        if event is None:
+            self._eventbuffer = None
+            raise tulip.EofStream("EOF encountered while reading events")
+        return event
 
     @tulip.coroutine
     def _read_reply(self):
         """Read the first reply in the buffer."""
-        return (yield from self._replybuffer.read())
+        reply = yield from self._replybuffer.read()
+        if reply is None:
+            self._replybuffer = None
+            raise tulip.EofStream("EOF encountered while reading replies")
+        return reply
 
     @tulip.coroutine
     def networks(self):
         """Returns a list of active networks on this DaZeus instance."""
         req = dazeus_json_create(dazeus_create_request("get", "networks"))
         reply = yield from self._send(req)
-        if _check_reply("get", "networks", reply):
-            return reply["networks"]
-        #TODO handle absence of networks.
+        _check_reply("get", "networks", reply)
+        return reply["networks"]
+        #TODO handle absence of networks?
 
     @tulip.coroutine
     def channels(self, network):
@@ -85,8 +130,8 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("get", "channels",
                                                        network))
         reply = yield from self._send(req)
-        if _check_reply("get", "channels", reply):
-            return reply["channels"]
+        _check_reply("get", "channels", reply)
+        return reply["channels"]
 
     @tulip.coroutine
     def message(self, network, recipient, message):
@@ -98,7 +143,7 @@ class DaZeus:
                                                        network, recipient,
                                                        message))
         reply = yield from self._send(req)
-        return _check_reply("do", "message", reply)
+        _check_reply("do", "message", reply)
 
     @tulip.coroutine
     def action(self, network, recipient, message):
@@ -110,7 +155,7 @@ class DaZeus:
                                                        network, recipient,
                                                        message))
         reply = yield from self._send(req)
-        return _check_reply("do", "action", reply)
+        _check_reply("do", "action", reply)
 
     @tulip.coroutine
     def names(self, network, channel):
@@ -122,7 +167,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "names",
                                                        network, channel))
         reply = yield from self._send(req)
-        return _check_reply("do", "names", reply)
+        _check_reply("do", "names", reply)
 
     @tulip.coroutine
     def whois(self, network, nickname):
@@ -134,7 +179,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "whois",
                                                        network, nickname))
         reply = yield from self._send(req)
-        return _check_reply("do", "whois", reply)
+        _check_reply("do", "whois", reply)
 
     @tulip.coroutine
     def join(self, network, channel):
@@ -147,7 +192,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "join",
                                                        network, channel))
         reply = yield from self._send(req)
-        return _check_reply("do", "join", reply)
+        _check_reply("do", "join", reply)
 
     @tulip.coroutine
     def part(self, network, channel):
@@ -160,7 +205,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "part",
                                                        network, channel))
         reply = yield from self._send(req)
-        return _check_reply("do", "part", reply)
+        _check_reply("do", "part", reply)
 
     @tulip.coroutine
     def nick(self, network):
@@ -168,8 +213,8 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("get", "nick",
                                                        network))
         reply = yield from self._send(req)
-        if _check_reply("get", "nick", reply):
-            return reply["nick"]
+        _check_reply("get", "nick", reply)
+        return reply["nick"]
 
     @tulip.coroutine
     def handshake(self, name, version, configname=None):
@@ -187,8 +232,7 @@ class DaZeus:
                                                        configname))
         reply = yield from self._send(req)
         logging.debug("Reply received from handshake: %s", reply)
-        return _check_reply("do", "handshake", reply)
-        #TODO is there an error?
+        _check_reply("do", "handshake", reply)
 
     @tulip.coroutine
     def get_config_var(self, vargroup, varname):
@@ -200,8 +244,8 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("get", "config",
                                                        vargroup, varname))
         reply = yield from self._send(req)
-        if _check_reply("get", "config", reply):
-            return reply["value"]
+        _check_reply("get", "config", reply)
+        return reply["value"]
 
     @tulip.coroutine
     def get_prop(self, propname, network=None, receiver=None, sender=None):
@@ -215,8 +259,8 @@ class DaZeus:
                                                        "get", network,
                                                        receiver, sender))
         reply = yield from self._send(req)
-        if _check_reply("do", "property", reply):
-            return reply["variable"], reply["value"]
+        _check_reply("do", "property", reply)
+        return reply["variable"], reply["value"]
         #TODO values apparently need some form of en / decoding.
 
     @tulip.coroutine
@@ -264,11 +308,11 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "subscribe",
                                                        *events))
         reply = yield from self._send(req)
-        if _check_reply("do", "subscribe", reply):
-            numsub = reply["added"]
-            self._subscriptions.extend(events)
-            #TODO check if there can be duplicates.
-            return events
+        _check_reply("do", "subscribe", reply)
+        numsub = reply["added"]
+        self._subscriptions.extend(events)
+        #TODO check if there can be duplicates.
+        return events
 
     @tulip.coroutine
     def unsubscribe_events(self, *events):
@@ -279,12 +323,12 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "unsubscribe",
                                                        *events))
         reply = yield from self._send(req)
-        if _check_reply("do", "unsubscribe", reply):
-            numsub = reply["removed"]
-            for event in events:
-                self._subscriptions.remove(event)
-            #TODO check if there can be duplicates.
-            return events
+        _check_reply("do", "unsubscribe", reply)
+        numsub = reply["removed"]
+        for event in events:
+            self._subscriptions.remove(event)
+        #TODO check if there can be duplicates.
+        return events
 
     @tulip.coroutine
     def subscribe_command(self, command, network=None):
@@ -300,7 +344,7 @@ class DaZeus:
             params.add(network)
         req = dazeus_json_create(dazeus_create_request(*params))
         reply = yield from self._send(req)
-        return _check_reply("do", "command", reply)
+        _check_reply("do", "command", reply)
 
     def subscriptions(self):
         """Returns a list of all events which you are subscribed to."""
@@ -309,11 +353,20 @@ class DaZeus:
     @tulip.coroutine
     def _send(self, req):
         self._transport.write(req)
-        reply = yield from self._read_reply()
-        if reply is None:
+        try:
+            reply = yield from self._read_reply()
+        except tulip.EofStream as exc:
             # TODO handle disconnects more gracefully. Raise disconnecterror
             # and have client code handle it.
-            raise EOFError("EOF encountered while waiting for reply.")
+            # EOF received indicates the other end has closed the connection.
+            # dazeus-core is, at that point, no longer listening, so we can
+            # abort.
+            self._abort()
+            # Since this happened while reading from the replybuffer we can
+            # unset that as well.
+            self._replybuffer = None
+            raise EOFError("Remote closed the connection while we were waiting"
+                           " for reply.")
         return reply
 
 
@@ -332,7 +385,7 @@ def _check_reply(reqtype, what, reply):
     -reply: The parsed dictionary based on the JSON reply.
 
     The function can raise various Exceptions based on anomalies encountered:
-    -TypeError: if an empty reply or an invalid reqtype is passed in.
+    -TypeError: if an empty reply is passed in.
     -InvalidReplyError: If a reply is missing the "got" / "did" or "success"
                         fields, or a field does not match its expected value.
     -RequestFailedError: If the "success" field is False.
@@ -342,7 +395,13 @@ def _check_reply(reqtype, what, reply):
     logging.debug("Reqtype passed to _check_reply: %s", reqtype)
     logging.debug("Reply passed to _check_reply: %s", reply)
 
+    assert reqtype in ("get", "do"), "Invalid reqtype passed to _check_reply"
+
     if reply is None:
+        # This should never happen in the normal flow of the library, since
+        # a reply is always obtained through _read_reply which can never return
+        # an empty reply.
+        # However, not an assert because it still depends on external input.
         logging.error("Empty reply passed to _check_reply")
         raise TypeError("Empty reply passed to _check_reply")
 
@@ -352,9 +411,6 @@ def _check_reply(reqtype, what, reply):
         reptype = "got"
     elif reqtype == "do":
         reptype = "did"
-    else:
-        logging.error("Invalid reqtype passed to _check_reply: %s", reqtype)
-        raise TypeError("Invalid reqtype passed to _check_reply: %s", reqtype)
 
     try:
         got = reply[reptype]
@@ -377,17 +433,18 @@ def _check_reply(reqtype, what, reply):
         success = reply["success"]
     except KeyError:
         logging.error("Invalid reply received: Missing success")
-        raise InvalidReplyError(
-            str.format("Invalid reply received: Missing success"), reply)
+        raise InvalidReplyError("Invalid reply received: Missing success",
+                                reply)
 
     if not success:
-        logging.error("Request for %s failed: %s", what, reply)
         error = reply.get("error")
         if error is not None:
+            logging.error("Request for %s failed with error: %s (Reply: %s)",
+                          what, error, reply)
             raise RequestFailedError(error, reply)
         else:
-            logging.warn("Reply for failed request without error message "
-                         "received: %s", reply)
+            logging.error("Request for %s failed without error: %s",
+                          what, reply)
             raise RequestFailedError("No error message", reply)
 
     logging.debug("Reply %s for request %s : %s passed validation.", reply,
