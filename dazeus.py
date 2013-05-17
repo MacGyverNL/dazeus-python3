@@ -309,36 +309,88 @@ class DaZeus:
     @tulip.coroutine
     def _send(self, req):
         self._transport.write(req)
-        return (yield from self._read_reply())
+        reply = yield from self._read_reply()
+        if reply is None:
+            # TODO handle disconnects more gracefully. Raise disconnecterror
+            # and have client code handle it.
+            raise EOFError("EOF encountered while waiting for reply.")
+        return reply
 
 
 def check_reply(reqtype, what, reply):
+    """Parse the reply and raise appropriate exceptions.
+
+    This function parses a reply for compliance to the DaZeus protocol and
+    for success of the request.
+
+    Arguments:
+    -reqtype: The type of request for which this reply was generated. Possible
+              values: "get" and "do".
+    -what: The request-parameter for which this reply was generated, e.g.
+           "networks" or "whois". Used to match the value of the "got" or "did"
+           fields.
+    -reply: The parsed dictionary based on the JSON reply.
+
+    The function can raise various Exceptions based on anomalies encountered:
+    -TypeError: if an empty reply or an invalid reqtype is passed in.
+    -InvalidReplyError: If a reply is missing the "got" / "did" or "success"
+                        fields, or a field does not match its expected value.
+    -RequestFailedError: If the "success" field is False.
+
+    If no Exception is raised the function will always return True.
+    """
+    # TODO doesn't make sense to always return true. Maybe remove
+    # RequestFailedError and make that the return value?
     logging.debug("Reqtype passed to check_reply: %s", reqtype)
     logging.debug("Reply passed to check_reply: %s", reply)
 
     if reply is None:
-        #TODO make this an exception
-        logging.error("EOF received while waiting for reply.")
-        return False
+        logging.error("Empty reply passed to check_reply")
+        raise TypeError("Empty reply passed to check_reply")
 
+    # TODO make all this case-insensitive, e.g. by casting the appropriate
+    # fields to lowercase.
     if reqtype == "get":
         reptype = "got"
     elif reqtype == "do":
         reptype = "did"
     else:
-        #TODO handle invalid reqtype
-        logging.warning("Invalid reqtype: %s", reqtype)
-    got = reply.get(reptype)
+        logging.error("Invalid reqtype passed to check_reply: %s", reqtype)
+        raise TypeError("Invalid reqtype passed to check_reply: %s", reqtype)
+
+    try:
+        got = reply[reptype]
+    except KeyError:
+        #TODO make this warnings instead of exceptions. Will require
+        # getting the other possible field before failing.
+        logging.error("Invalid reply received: Missing %s", reptype)
+        raise InvalidReplyError(
+            str.format("Invalid reply received: Missing {}", reptype), reply)
+
     if got != what:
-        logging.error("Invalid reply received: %s", reply)
-        #TODO make this an exception
-        return False
-    success = reply.get("success")
+        logging.error("Invalid reply received: Expected %s but got %s",
+                      what, got)
+        raise InvalidReplyError(
+            str.format("Invalid reply received: Expected {} but got {}",
+                       what, got),
+            reply)
+
+    try:
+        success = reply["success"]
+    except KeyError:
+        logging.error("Invalid reply received: Missing success")
+        raise InvalidReplyError(
+            str.format("Invalid reply received: Missing success"), reply)
+
     if not success:
-        logging.warning("Getting %s failed: %s", what, reply)
-        #TODO make this an exception
-        # use reply.get("error").
-        return False
+        logging.error("Request for %s failed: %s", what, reply)
+        error = reply.get("error")
+        if error is not None:
+            raise RequestFailedError(error, reply)
+        else:
+            logging.warn("Reply for failed request without error message "
+                         "received: %s", reply)
+            raise RequestFailedError("No error message", reply)
     return True
 
 
@@ -516,3 +568,18 @@ if __name__ == "__main__":
     networkzeus()
 
     loop.run_forever()
+
+
+class ReplyException(Exception):
+
+    def __init__(self, message, reply):
+        Exception.__init__(message)
+        self.reply = reply
+
+
+class RequestFailedError(ReplyException):
+    pass
+
+
+class InvalidReplyError(ReplyException):
+    pass
