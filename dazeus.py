@@ -12,7 +12,7 @@ import tulip
 # TODO: fix decent debugging logging
 # TODO: documentation
 # TODO: well, most of everything else as well.
-# TODO: Errors on reply instead of simply returning from check_reply
+# TODO: Errors on reply instead of simply returning from _check_reply
 
 PROTOCOL_VERSION = 1
 
@@ -75,7 +75,7 @@ class DaZeus:
         """Returns a list of active networks on this DaZeus instance."""
         req = dazeus_json_create(dazeus_create_request("get", "networks"))
         reply = yield from self._send(req)
-        if check_reply("get", "networks", reply):
+        if _check_reply("get", "networks", reply):
             return reply["networks"]
         #TODO handle absence of networks.
 
@@ -85,7 +85,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("get", "channels",
                                                        network))
         reply = yield from self._send(req)
-        if check_reply("get", "channels", reply):
+        if _check_reply("get", "channels", reply):
             return reply["channels"]
 
     @tulip.coroutine
@@ -98,7 +98,7 @@ class DaZeus:
                                                        network, recipient,
                                                        message))
         reply = yield from self._send(req)
-        return check_reply("do", "message", reply)
+        return _check_reply("do", "message", reply)
 
     @tulip.coroutine
     def action(self, network, recipient, message):
@@ -110,7 +110,7 @@ class DaZeus:
                                                        network, recipient,
                                                        message))
         reply = yield from self._send(req)
-        return check_reply("do", "action", reply)
+        return _check_reply("do", "action", reply)
 
     @tulip.coroutine
     def names(self, network, channel):
@@ -122,7 +122,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "names",
                                                        network, channel))
         reply = yield from self._send(req)
-        return check_reply("do", "names", reply)
+        return _check_reply("do", "names", reply)
 
     @tulip.coroutine
     def whois(self, network, nickname):
@@ -134,7 +134,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "whois",
                                                        network, nickname))
         reply = yield from self._send(req)
-        return check_reply("do", "whois", reply)
+        return _check_reply("do", "whois", reply)
 
     @tulip.coroutine
     def join(self, network, channel):
@@ -147,7 +147,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "join",
                                                        network, channel))
         reply = yield from self._send(req)
-        return check_reply("do", "join", reply)
+        return _check_reply("do", "join", reply)
 
     @tulip.coroutine
     def part(self, network, channel):
@@ -160,7 +160,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "part",
                                                        network, channel))
         reply = yield from self._send(req)
-        return check_reply("do", "part", reply)
+        return _check_reply("do", "part", reply)
 
     @tulip.coroutine
     def nick(self, network):
@@ -168,7 +168,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("get", "nick",
                                                        network))
         reply = yield from self._send(req)
-        if check_reply("get", "nick", reply):
+        if _check_reply("get", "nick", reply):
             return reply["nick"]
 
     @tulip.coroutine
@@ -187,7 +187,7 @@ class DaZeus:
                                                        configname))
         reply = yield from self._send(req)
         logging.debug("Reply received from handshake: %s", reply)
-        return check_reply("do", "handshake", reply)
+        return _check_reply("do", "handshake", reply)
         #TODO is there an error?
 
     @tulip.coroutine
@@ -200,7 +200,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("get", "config",
                                                        vargroup, varname))
         reply = yield from self._send(req)
-        if check_reply("get", "config", reply):
+        if _check_reply("get", "config", reply):
             return reply["value"]
 
     @tulip.coroutine
@@ -215,7 +215,7 @@ class DaZeus:
                                                        "get", network,
                                                        receiver, sender))
         reply = yield from self._send(req)
-        if check_reply("do", "property", reply):
+        if _check_reply("do", "property", reply):
             return reply["variable"], reply["value"]
         #TODO values apparently need some form of en / decoding.
 
@@ -264,7 +264,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "subscribe",
                                                        *events))
         reply = yield from self._send(req)
-        if check_reply("do", "subscribe", reply):
+        if _check_reply("do", "subscribe", reply):
             numsub = reply["added"]
             self._subscriptions.extend(events)
             #TODO check if there can be duplicates.
@@ -279,7 +279,7 @@ class DaZeus:
         req = dazeus_json_create(dazeus_create_request("do", "unsubscribe",
                                                        *events))
         reply = yield from self._send(req)
-        if check_reply("do", "unsubscribe", reply):
+        if _check_reply("do", "unsubscribe", reply):
             numsub = reply["removed"]
             for event in events:
                 self._subscriptions.remove(event)
@@ -300,7 +300,7 @@ class DaZeus:
             params.add(network)
         req = dazeus_json_create(dazeus_create_request(*params))
         reply = yield from self._send(req)
-        return check_reply("do", "command", reply)
+        return _check_reply("do", "command", reply)
 
     def subscriptions(self):
         """Returns a list of all events which you are subscribed to."""
@@ -317,7 +317,7 @@ class DaZeus:
         return reply
 
 
-def check_reply(reqtype, what, reply):
+def _check_reply(reqtype, what, reply):
     """Parse the reply and raise appropriate exceptions.
 
     This function parses a reply for compliance to the DaZeus protocol and
@@ -337,16 +337,14 @@ def check_reply(reqtype, what, reply):
                         fields, or a field does not match its expected value.
     -RequestFailedError: If the "success" field is False.
 
-    If no Exception is raised the function will always return True.
+    If no Exception is raised the function will simply return.
     """
-    # TODO doesn't make sense to always return true. Maybe remove
-    # RequestFailedError and make that the return value?
-    logging.debug("Reqtype passed to check_reply: %s", reqtype)
-    logging.debug("Reply passed to check_reply: %s", reply)
+    logging.debug("Reqtype passed to _check_reply: %s", reqtype)
+    logging.debug("Reply passed to _check_reply: %s", reply)
 
     if reply is None:
-        logging.error("Empty reply passed to check_reply")
-        raise TypeError("Empty reply passed to check_reply")
+        logging.error("Empty reply passed to _check_reply")
+        raise TypeError("Empty reply passed to _check_reply")
 
     # TODO make all this case-insensitive, e.g. by casting the appropriate
     # fields to lowercase.
@@ -355,8 +353,8 @@ def check_reply(reqtype, what, reply):
     elif reqtype == "do":
         reptype = "did"
     else:
-        logging.error("Invalid reqtype passed to check_reply: %s", reqtype)
-        raise TypeError("Invalid reqtype passed to check_reply: %s", reqtype)
+        logging.error("Invalid reqtype passed to _check_reply: %s", reqtype)
+        raise TypeError("Invalid reqtype passed to _check_reply: %s", reqtype)
 
     try:
         got = reply[reptype]
@@ -391,7 +389,9 @@ def check_reply(reqtype, what, reply):
             logging.warn("Reply for failed request without error message "
                          "received: %s", reply)
             raise RequestFailedError("No error message", reply)
-    return True
+
+    logging.debug("Reply %s for request %s : %s passed validation.", reply,
+                  reqtype, what)
 
 
 def dazeus_json_create(message_dict):
