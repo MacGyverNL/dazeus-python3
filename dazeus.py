@@ -31,11 +31,8 @@ class DaZeus:
 
     @tulip.coroutine
     def connect(self, conntype, address, port=None):
-        if conntype not in ("tcp", "unix"):
-            #FIXME raise exception
-            logging.error("Invalid conntype value: %s. "
-                          "Valid values are tcp and unix.", conntype)
-            return False
+        assert conntype in ("tcp", "unix"), ("Invalid connection type passed "
+                                             "to connect.")
 
         loop = tulip.get_event_loop()
         #FIXME check for loop == None
@@ -65,34 +62,14 @@ class DaZeus:
 
     @tulip.coroutine
     def disconnect(self):
-        """Disconnect the socket and remove transport and protocol.
-
-        Any data buffered to be sent will still be sent before the actual
-        close is done.
-        Any data received from the socket will remain buffered until read.
-        """
+        """Disconnect the socket."""
         if self._connected:
             transport = self._transport
             # Writing an EOF will trigger a close() at dazeus-core.
             # Best-effort: Triggering a close() in this way ensures that
             # dazeus-core has read all the buffered requests and at least
             # buffered replies to be sent before reading the EOF.
-            yield from transport.write_eof()
-            self._connected = False
-            self._transport = None
-            self._protocol = None
-
-    @tulip.coroutine
-    def _abort(self):
-        """Immediately close the socket, remove transport and protocol.
-
-        Any data buffered to be sent is lost.
-        Any data already read from the socket will remain buffered until read.
-        Any data waiting to be read from the socket is lost.
-        """
-        if self._connected:
-            transport = self._transport
-            yield from transport.abort()
+            yield from transport.close()
             self._connected = False
             self._transport = None
             self._protocol = None
