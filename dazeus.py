@@ -11,8 +11,6 @@ import tulip
 
 # TODO: fix decent debugging logging
 # TODO: documentation
-# TODO: well, most of everything else as well.
-# TODO: Errors on reply instead of simply returning from _check_reply
 
 PROTOCOL_VERSION = 1
 
