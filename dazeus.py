@@ -20,7 +20,7 @@ PROTOCOL_VERSION = 1
 class DaZeus:
 
     def __init__(self):
-        self._subscriptions = []
+        self._subscriptions = set()
         self._transport = None
         self._protocol = None
 
@@ -61,7 +61,7 @@ class DaZeus:
         return True
 
     @tulip.coroutine
-    def disconnect(self):
+    def disconnect(self, discard=False):
         """Disconnect the socket."""
         if self._connected:
             transport = self._transport
@@ -73,22 +73,32 @@ class DaZeus:
             self._connected = False
             self._transport = None
             self._protocol = None
+            self._subscriptions = set()
+        if discard:
+            self._eventbuffer = None
+            self._replybuffer = None
 
     @tulip.coroutine
     def read_event(self):
         """Read the first event in the buffer."""
+        if self._eventbuffer is None:
+            raise tulip.EofStream("No buffer present.")
         event = yield from self._eventbuffer.read()
         if event is None:
             self._eventbuffer = None
+            self.disconnect(False)
             raise tulip.EofStream("EOF encountered while reading events")
         return event
 
     @tulip.coroutine
     def _read_reply(self):
         """Read the first reply in the buffer."""
+        if self._replybuffer is None:
+            raise tulip.EofStream("No buffer present.")
         reply = yield from self._replybuffer.read()
         if reply is None:
             self._replybuffer = None
+            self.disconnect(False)
             raise tulip.EofStream("EOF encountered while reading replies")
         return reply
 
@@ -99,7 +109,6 @@ class DaZeus:
         reply = yield from self._send(req)
         _check_reply("get", "networks", reply)
         return reply["networks"]
-        #TODO handle absence of networks?
 
     @tulip.coroutine
     def channels(self, network):
@@ -226,22 +235,23 @@ class DaZeus:
 
     @tulip.coroutine
     def get_prop(self, propname, network=None, receiver=None, sender=None):
-        """Returns the value of variable from the persistent database.
+        """Returns the name and value of variable from the persistent database.
 
         An optional context can be passed in the form of network, receiver and
         sender, in that order of specificity. If multiple properties match,
         only the most specific match will be returned.
         """
+        _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
                                                        "get", network,
                                                        receiver, sender))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
         return reply["variable"], reply["value"]
-        #TODO values apparently need some form of en / decoding.
 
     @tulip.coroutine
-    def set_prop(self, propname, network=None, receiver=None, sender=None):
+    def set_prop(self, propname, value, network=None, receiver=None,
+                 sender=None):
         """Sets the given variable in the persistent database.
 
         An optional context can be passed in the form of network, receiver and
@@ -250,20 +260,28 @@ class DaZeus:
         useful in situations where you want, e.g. different settings per
         network, or different settings per channel.
         """
-        raise NotImplementedError
-        #TODO what the hell does the perl code do here?
+        _check_context(network, receiver, sender)
+        req = dazeus_json_create(dazeus_create_request("do", "property",
+                                                       "set", value, network,
+                                                       receiver, sender))
+        reply = yield from self._send(req)
+        _check_reply("do", "property", reply)
 
     @tulip.coroutine
     def del_prop(self, propname, network=None, receiver=None, sender=None):
         """Deletes the given variable from the persistent database.
 
         An optional context can be passed in the form of network, receiver and
-        sender, in that order of specificity. If multiple properties match,
-        only the most specific match will be removed. If no properties match,
-        no removal will be done.
+        sender, in that order of specificity. Only an exact match will be
+        removed. If no properties match, no removal will be done, but no error
+        will be reported.
         """
-        # FIXME: Only the most specific, or only an exact match?
-        raise NotImplementedError
+        _check_context(network, receiver, sender)
+        req = dazeus_json_create(dazeus_create_request("do", "property",
+                                                       "unset", network,
+                                                       receiver, sender))
+        reply = yield from self._send(req)
+        _check_reply("do", "property", reply)
 
     @tulip.coroutine
     def get_prop_keys(self, namespace, network=None,
@@ -277,7 +295,13 @@ class DaZeus:
         sender, in that order of specificity. If multiple namespaces match,
         only the most specific match will be returned.
         """
-        raise NotImplementedError
+        _check_context(network, receiver, sender)
+        req = dazeus_json_create(dazeus_create_request("do", "property",
+                                                       "keys", network,
+                                                       receiver, sender))
+        reply = yield from self._send(req)
+        _check_reply("do", "property", reply)
+        return reply["variable"], reply["value"]
 
     @tulip.coroutine
     def subscribe_events(self, *events):
@@ -286,10 +310,7 @@ class DaZeus:
                                                        *events))
         reply = yield from self._send(req)
         _check_reply("do", "subscribe", reply)
-        numsub = reply["added"]
-        self._subscriptions.extend(events)
-        #TODO check if there can be duplicates.
-        return events
+        self._subscriptions.update(events)
 
     @tulip.coroutine
     def unsubscribe_events(self, *events):
@@ -301,11 +322,7 @@ class DaZeus:
                                                        *events))
         reply = yield from self._send(req)
         _check_reply("do", "unsubscribe", reply)
-        numsub = reply["removed"]
-        for event in events:
-            self._subscriptions.remove(event)
-        #TODO check if there can be duplicates.
-        return events
+        self._subscriptions.difference_update(event)
 
     @tulip.coroutine
     def subscribe_command(self, command, network=None):
@@ -324,7 +341,7 @@ class DaZeus:
         _check_reply("do", "command", reply)
 
     def subscriptions(self):
-        """Returns a list of all events which you are subscribed to."""
+        """Returns a set of all events which you are subscribed to."""
         return self._subscriptions
 
     @tulip.coroutine
@@ -333,18 +350,19 @@ class DaZeus:
         try:
             reply = yield from self._read_reply()
         except tulip.EofStream as exc:
-            # TODO handle disconnects more gracefully. Raise disconnecterror
-            # and have client code handle it.
-            # EOF received indicates the other end has closed the connection.
-            # dazeus-core is, at that point, no longer listening, so we can
-            # abort.
-            self._abort()
-            # Since this happened while reading from the replybuffer we can
-            # unset that as well.
-            self._replybuffer = None
             raise EOFError("Remote closed the connection while we were waiting"
                            " for reply.")
         return reply
+
+
+def _check_context(network, receiver, sender):
+    if sender is not None:
+        if receiver is None or network is None:
+            raise InvalidContextError()
+
+    if receiver is not None:
+        if network is None:
+            raise InvalidContextError()
 
 
 def _check_reply(reqtype, what, reply):
@@ -430,7 +448,7 @@ def _check_reply(reqtype, what, reply):
 
 def dazeus_json_create(message_dict):
     logging.debug("Creating json from dict: %s", message_dict)
-    msg = json.dumps(message_dict)
+    msg = json.dumps(message_dict, ensure_ascii=False)
     logging.debug("Json to send: %s", msg)
     msg = msg.encode('utf-8')
     logging.debug("Encoded json: %s", msg)
@@ -445,11 +463,11 @@ def dazeus_json_create(message_dict):
 
 
 def dazeus_create_request(reqtype, what, *params):
-    if reqtype not in ("do", "get"):
-        #TODO fail on invalid reqtype
-        logging.warning("Invalid reqtype: %s", reqtype)
+    assert reqtype in ("do", "get"), logging.warning("Invalid reqtype: %s",
+                                                     reqtype)
     msg = {reqtype: what}
     if params is not None:
+        assert None not in params, "None passed as parameter to request"
         msg["params"] = params
     return msg
 
@@ -477,7 +495,6 @@ def dazeus_message_parser():
 
     try:
         # FIXME correctly ignore \n and \r outside of JSON
-        # FIXME handle EOF (empty buffer)
         # FIXME handle incorrect JSON size
         while True:
             # read size of the JSON message, at most 20 bytes of ASCII-digits
@@ -554,35 +571,22 @@ def buffer_router(inbuffer, selector, truebuffer, falsebuffer):
         truebuffer.feed_eof()
         falsebuffer.feed_eof()
 
+    logging.debug("buffer_router encountered EOF. Shutdown.")
 
-@tulip.task
-def networkzeus():
-    dazeus = DaZeus()
-#   connection = yield from dazeus.connect("unix", "/tmp/pythonzeustest.sock")
-    connection = yield from dazeus.connect("tcp", "localhost", 1234)
-    logging.debug("Connection established %s", connection)
 
-    handshake = yield from dazeus.handshake("networkzeus", "0.0.1")
+class ReplyException(Exception):
 
-    # register for }test
-    events = yield from dazeus.subscribe_command("test")
+    def __init__(self, message, reply):
+        Exception.__init__(message)
+        self.reply = reply
 
-    events = yield from dazeus.subscribe_events("whois", "names",
-                                                "join", "part", "privmsg")
-    print("Subscribed to events: %s", events)
 
-    networks = yield from dazeus.networks()
-    print(networks)
-    for network in networks:
-        parted = yield from dazeus.part(network, "#dazeus")
-        joined = yield from dazeus.join(network, "#dazeus")
-        nick = yield from dazeus.nick(network)
-        channels = yield from dazeus.channels(network)
-        for channel in channels:
-#            message = yield from dazeus.message(network, channel, "Test")
-#            action = yield from dazeus.action(network, channel,
-#                                              "tests some more")
-            names = yield from dazeus.names(network, channel)
+class RequestFailedError(ReplyException):
+    pass
+
+
+class InvalidReplyError(ReplyException):
+    pass
 
 
 if __name__ == "__main__":
@@ -599,21 +603,6 @@ if __name__ == "__main__":
         logging.critical("RuntimeError caught when trying to add "
                          "signal handler to event loop")
 
-    networkzeus()
+    # Call your plugin, defined as a tulip.task, here.
 
     loop.run_forever()
-
-
-class ReplyException(Exception):
-
-    def __init__(self, message, reply):
-        Exception.__init__(message)
-        self.reply = reply
-
-
-class RequestFailedError(ReplyException):
-    pass
-
-
-class InvalidReplyError(ReplyException):
-    pass
