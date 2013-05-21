@@ -241,7 +241,8 @@ class DaZeus:
         """
         context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "get", *context))
+                                                       "get", propname,
+                                                       *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
         return reply["variable"], reply["value"]
@@ -259,7 +260,8 @@ class DaZeus:
         """
         context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "set", value, *context))
+                                                       "set", propname, value,
+                                                       *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
 
@@ -274,7 +276,8 @@ class DaZeus:
         """
         context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "unset", *context))
+                                                       "unset", propname,
+                                                       *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
 
@@ -292,7 +295,8 @@ class DaZeus:
         """
         context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "keys", *context))
+                                                       "keys", propname,
+                                                       *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
         return reply["variable"], reply["value"]
