@@ -245,7 +245,11 @@ class DaZeus:
                                                        *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
-        return reply["variable"], reply["value"]
+        try:
+            val = reply["value"]
+        except KeyError:
+            val = None
+        return reply["variable"], val
 
     @tulip.coroutine
     def set_prop(self, propname, value, network=None, receiver=None,
