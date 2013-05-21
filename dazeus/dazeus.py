@@ -299,7 +299,7 @@ class DaZeus:
         """
         context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "keys", propname,
+                                                       "keys", namespace,
                                                        *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
