@@ -582,7 +582,7 @@ def buffer_router(inbuffer, selector, truebuffer, falsebuffer):
 class ReplyException(Exception):
 
     def __init__(self, message, reply):
-        Exception.__init__(message)
+        Exception.__init__(self, message)
         self.reply = reply
 
 
