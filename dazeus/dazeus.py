@@ -303,7 +303,7 @@ class DaZeus:
                                                        *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
-        return reply["variable"], reply["value"]
+        return reply["keys"]
 
     @tulip.coroutine
     def subscribe_events(self, *events):
