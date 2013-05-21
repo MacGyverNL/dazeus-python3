@@ -239,10 +239,9 @@ class DaZeus:
         sender, in that order of specificity. If multiple properties match,
         only the most specific match will be returned.
         """
-        _check_context(network, receiver, sender)
+        context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "get", network,
-                                                       receiver, sender))
+                                                       "get", *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
         return reply["variable"], reply["value"]
@@ -258,10 +257,9 @@ class DaZeus:
         useful in situations where you want, e.g. different settings per
         network, or different settings per channel.
         """
-        _check_context(network, receiver, sender)
+        context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "set", value, network,
-                                                       receiver, sender))
+                                                       "set", value, *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
 
@@ -274,10 +272,9 @@ class DaZeus:
         removed. If no properties match, no removal will be done, but no error
         will be reported.
         """
-        _check_context(network, receiver, sender)
+        context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "unset", network,
-                                                       receiver, sender))
+                                                       "unset", *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
 
@@ -293,10 +290,9 @@ class DaZeus:
         sender, in that order of specificity. If multiple namespaces match,
         only the most specific match will be returned.
         """
-        _check_context(network, receiver, sender)
+        context = _check_context(network, receiver, sender)
         req = dazeus_json_create(dazeus_create_request("do", "property",
-                                                       "keys", network,
-                                                       receiver, sender))
+                                                       "keys", *context))
         reply = yield from self._send(req)
         _check_reply("do", "property", reply)
         return reply["variable"], reply["value"]
@@ -361,6 +357,9 @@ def _check_context(network, receiver, sender):
     if receiver is not None:
         if network is None:
             raise InvalidContextError()
+
+    context = [network, receiver, sender]
+    return filter(None, context)
 
 
 def _check_reply(reqtype, what, reply):
